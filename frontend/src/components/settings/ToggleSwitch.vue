@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { cn } from '@/lib/utils'
+import { Switch } from '@/components/ui/switch'
 
 const props = defineProps<{
   modelValue: boolean
@@ -21,36 +21,16 @@ const checked = computed({
 
 <template>
   <div class="flex items-start justify-between gap-4">
-    <div class="min-w-0">
-      <div class="text-sm font-medium">{{ label }}</div>
-      <div v-if="description" class="mt-1 text-xs text-muted-foreground">
+    <div class="min-w-0 flex-1">
+      <label class="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
+        {{ label }}
+      </label>
+      <p v-if="description" class="mt-1 text-xs text-muted-foreground">
         {{ description }}
-      </div>
+      </p>
     </div>
 
-    <button
-      type="button"
-      role="switch"
-      :aria-checked="checked"
-      :disabled="disabled"
-      :class="
-        cn(
-          'relative inline-flex h-6 w-11 flex-none items-center rounded-full border transition-colors',
-          disabled && 'cursor-not-allowed opacity-60',
-          checked ? 'bg-primary' : 'bg-muted',
-        )
-      "
-      @click="checked = !checked"
-    >
-      <span
-        :class="
-          cn(
-            'inline-block size-5 translate-x-0 rounded-full bg-background shadow transition-transform',
-            checked && 'translate-x-5',
-          )
-        "
-      />
-    </button>
+    <Switch v-model:checked="checked" :disabled="disabled" />
   </div>
 </template>
 
