@@ -4,6 +4,7 @@ import json
 from dataclasses import dataclass
 from typing import Any, Callable
 
+from app.models.chat import ChatSettings
 from app.tools.data_analysis import analyze_json
 from app.tools.image_generation import generate_image
 from app.tools.web_search import web_search
@@ -28,7 +29,7 @@ class ToolSpec:
         }
 
 
-def get_enabled_tool_specs(settings: Any) -> list[ToolSpec]:
+def get_enabled_tool_specs(settings: ChatSettings) -> list[ToolSpec]:
     """
     Build tool list conditionally based on settings.
 
@@ -36,7 +37,7 @@ def get_enabled_tool_specs(settings: Any) -> list[ToolSpec]:
     """
     specs: list[ToolSpec] = []
 
-    if getattr(settings, "web_search", False):
+    if settings.web_search:
         specs.append(
             ToolSpec(
                 name="web_search",
@@ -51,7 +52,7 @@ def get_enabled_tool_specs(settings: Any) -> list[ToolSpec]:
             )
         )
 
-    if getattr(settings, "image_generation", False):
+    if settings.image_generation:
         specs.append(
             ToolSpec(
                 name="generate_image",
@@ -66,7 +67,7 @@ def get_enabled_tool_specs(settings: Any) -> list[ToolSpec]:
             )
         )
 
-    if getattr(settings, "data_analysis", False):
+    if settings.data_analysis:
         specs.append(
             ToolSpec(
                 name="analyze_json",
