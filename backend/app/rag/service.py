@@ -7,6 +7,10 @@ from app.core.config import settings
 from app.rag.chunking import chunk_documents
 from app.rag.loaders import load_files
 
+import chromadb
+from chromadb.config import Settings as ChromaSettings
+from openai import OpenAI
+
 
 class RAGService:
     """
@@ -23,10 +27,35 @@ class RAGService:
     """
 
     def __init__(self) -> None:
-        # TODO: Initialize ChromaDB client
-        # self.client = chromadb.Client(...)
-        # self.collection = self.client.get_or_create_collection(...)
-        pass
+        persist_dir = Path(settings.chroma_persist_dir).resolve()
+        persist_dir.mkdir(parents=True, exist_ok=True)
+
+        # Persistent client so data survives restarts
+        self.client = chromadb.PersistentClient(
+            path=str(persist_dir),
+            settings=ChromaSettings(anonymized_telemetry=False),
+        )
+
+        # Create collection if missing
+        self.collection = self.client.get_or_create_collection(
+            name=settings.chroma_collection,
+        )
+
+        self._openai = OpenAI(api_key=settings.openai_api_key) if settings.openai_api_key else None
+
+
+    def _embed_texts(self, texts: list[str]) -> list[list[float]]:
+        if not self._openai:
+            raise RuntimeError("OPENAI_API_KEY is not configured; cannot generate embeddings.")
+        if not texts:
+            return []
+
+        resp = self._openai.embeddings.create(
+            model=settings.openai_embedding_model,
+            input=texts,
+        )
+        # OpenAI returns items ordered by input
+        return [d.embedding for d in resp.data]
 
     def ingest_files(self, session_id: str, file_paths: list[Path]) -> dict[str, Any]:
         """
@@ -40,22 +69,41 @@ class RAGService:
         # 2. Chunk documents
         chunks = chunk_documents(documents)
 
-        # 3. TODO: Generate embeddings
-        # embeddings = generate_embeddings([c["content"] for c in chunks])
+        # 3. Generate embeddings
+        contents = [c["content"] for c in chunks]
+        embeddings = self._embed_texts(contents)
 
-        # 4. TODO: Store in ChromaDB with metadata
-        # self.collection.add(
-        #     ids=[...],
-        #     embeddings=embeddings,
-        #     documents=[c["content"] for c in chunks],
-        #     metadatas=[{...} for c in chunks],
-        # )
+        # 4. Store in ChromaDB with metadata
+        ids: list[str] = []
+        metadatas: list[dict[str, Any]] = []
+        for i, c in enumerate(chunks):
+            doc_id = c.get("document_id") or "unknown"
+            chunk_index = c.get("chunk_index")
+            ids.append(f"{session_id}:{doc_id}:{chunk_index}:{i}")
+            metadatas.append(
+                {
+                    "session_id": session_id,
+                    "document_id": c.get("document_id"),
+                    "filename": c.get("filename"),
+                    "chunk_index": c.get("chunk_index"),
+                    "start": c.get("start"),
+                    "end": c.get("end"),
+                }
+            )
+
+        if ids:
+            self.collection.add(
+                ids=ids,
+                embeddings=embeddings,
+                documents=contents,
+                metadatas=metadatas,
+            )
 
         return {
             "session_id": session_id,
             "documents_loaded": len(documents),
             "chunks_created": len(chunks),
-            "note": "RAG ingestion stub - embeddings and ChromaDB storage not implemented yet.",
+            "stored": len(ids),
         }
 
     def retrieve(self, session_id: str, query: str, top_k: int = 5) -> list[dict[str, Any]]:
@@ -67,8 +115,34 @@ class RAGService:
           - Query ChromaDB with session_id filter
           - Return chunks with metadata
         """
-        # Stub: return empty for now
-        return []
+        if not query.strip():
+            return []
+
+        top_k = max(1, min(int(top_k), 10))
+        q_emb = self._embed_texts([query.strip()])[0]
+
+        res = self.collection.query(
+            query_embeddings=[q_emb],
+            n_results=top_k,
+            where={"session_id": session_id},
+            include=["documents", "metadatas", "distances"],
+        )
+
+        docs = (res.get("documents") or [[]])[0]
+        metas = (res.get("metadatas") or [[]])[0]
+        dists = (res.get("distances") or [[]])[0]
+
+        out: list[dict[str, Any]] = []
+        for doc, meta, dist in zip(docs, metas, dists):
+            out.append(
+                {
+                    "content": doc,
+                    "metadata": meta or {},
+                    # Chroma distance is typically cosine distance (lower is better)
+                    "distance": dist,
+                }
+            )
+        return out
 
     def clear_session(self, session_id: str) -> None:
         """
@@ -76,5 +150,5 @@ class RAGService:
 
         TODO: Delete from ChromaDB where metadata.session_id == session_id
         """
-        pass
+        self.collection.delete(where={"session_id": session_id})
 

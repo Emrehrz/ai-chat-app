@@ -1,21 +1,76 @@
-## AI Tool-Calling Chat App (Vue + FastAPI + OpenAI + ChromaDB)
+# AI Tool-Calling Chat App (Vue + FastAPI + OpenAI + ChromaDB)
 
-> **Status**: README skeleton. Replace all `TODO:` placeholders as you implement.
+A small full‑stack chat app that demonstrates:
 
-### 1. Project Overview
+- **Backend-enforced capability toggles** (only enabled tools are registered)
+- **Single-round tool calling** (one tool-call round max; deterministic control flow)
+- **RAG (Retrieval-Augmented Generation)** over uploaded files using **ChromaDB** (local persistent vector store) + **OpenAI embeddings**
 
-**What this is**
+## Quick architecture
 
-- **This is a tool-calling AI chat application** built with **Vue** (frontend) + **FastAPI** (backend).
-- It supports **RAG (Retrieval-Augmented Generation) with ChromaDB** (local vector store).
-- It includes **4 toggleable capabilities** that are enforced by the backend:
-  - **Web Search**
-  - **Image Generation**
-  - **Data Analysis**
-  - **Think Mode**
-- It uses **OpenAI Chat Completions with tools** for agent/tool-calling behavior.
+- **Frontend**: Vue + Vite
+- **Backend**: FastAPI (agent orchestration + tool gating + RAG)
+- **Vector store**: ChromaDB (persistent on disk)
+- **LLM**: OpenAI Chat Completions (with `tools`)
 
-**What problem it solves (30 seconds)**
+```text
+frontend  ──HTTP──▶  backend (FastAPI)
+                    ├─ tool registry (web/img/data)
+                    ├─ RAG service (ChromaDB)
+                    └─ OpenAI (chat + embeddings)
+```
+
+## Key backend behavior
+
+### Agent loop (`/chat`)
+Implemented in `backend/app/api/routes/chat.py`.
+
+- Builds a system prompt describing enabled/disabled tools.
+- Registers tools *only if enabled*.
+- Calls OpenAI once.
+- If tool calls are returned:
+  - executes tools safely
+  - injects tool results
+  - calls OpenAI **one more time**
+- Returns the assistant message + `tool_calls` logs.
+
+### RAG flow (upload → ingest → retrieve)
+
+- `POST /files/upload`
+  - Stores files under `STORAGE_DIR/<session_id>/...`
+  - Triggers ingestion: load → chunk → embed → upsert into Chroma
+
+- Retrieval
+  - When the user likely refers to uploaded docs, `/chat` calls `RAGService.retrieve()`.
+  - Retrieved chunks are injected **explicitly** as a system message starting with `RAG_CONTEXT:`.
+
+## Setup (local)
+
+### Backend
+
+1) Create `backend/.env` (copy from `backend/env.example`).
+2) Set at least:
+- `OPENAI_API_KEY=...`
+
+### Frontend
+
+Use `frontend/package.json` / pnpm lockfile.
+
+## Environment variables
+
+See `backend/env.example`.
+
+## API endpoints
+
+- `GET /health`
+- `POST /files/upload` (multipart)
+- `GET /files?session_id=...`
+- `POST /chat`
+
+## Tests
+
+- Backend smoke test: `backend/app/tests/test_e2e_smoke.py`
+  - Validates endpoint wiring without calling OpenAI.
 
 - TODO: In 2–4 sentences, describe the user problem and how this app solves it.
 - TODO: State the intended users and what “success” looks like (e.g., faster research, grounded answers from uploaded docs).
@@ -27,9 +82,9 @@
 **High-level design goals**
 
 - **Clear separation of concerns**
-  - Frontend = UI + local state only
-  - Backend = orchestration + safety + prompt construction + tool exposure
-  - RAG = its own module/service (not embedded in `/chat` handler logic)
+   - Frontend = UI + local state only
+   - Backend = orchestration + safety + prompt construction + tool exposure
+   - RAG = its own module/service (not embedded in `/chat` handler logic)
 
 **High-level diagram (ASCII)**
 
@@ -57,24 +112,27 @@
 
 - Render chat UI, message list, loading indicators, tool-call traces (if displayed).
 - Own local UI state:
-  - chat messages
-  - session id
-  - settings/toggles
+   - chat messages
+   - session id
+   - settings/toggles
+
 - Send **full chat history + settings** on every `/chat` request.
 - TODO: Document any client-side validation (e.g., file type checks) if implemented.
 
 **Backend responsibilities**
 
 - Orchestrate the agent loop:
-  - build system prompt
-  - conditionally expose tools based on settings
-  - call OpenAI
-  - execute tool calls safely
-  - inject tool results
-  - return final assistant message
+   - build system prompt
+   - conditionally expose tools based on settings
+   - call OpenAI
+   - execute tool calls safely
+   - inject tool results
+   - return final assistant message
+
 - Enforce capability toggles:
-  - **disabled tools are not registered**
-  - system prompt includes “Do NOT call disabled tools”
+   - **disabled tools are not registered**
+   - system prompt includes “Do NOT call disabled tools”
+
 - Delegate retrieval to the **RAG module** (separate module boundary).
 
 **Where RAG lives**
@@ -86,13 +144,14 @@
 
 ### 3. Technology Stack
 
-- **Frontend**: Vue + shadcn/ui  
-  - TODO: Add router/state libs if used (keep minimal).
+- **Frontend**: Vue + shadcn/ui
+   - TODO: Add router/state libs if used (keep minimal).
+
 - **Backend**: FastAPI (Python)
 - **LLM**: OpenAI Chat Completions with **tools**
 - **RAG Vector Store**: ChromaDB (local)
-- **Storage**: In-memory or local disk (session scoped)  
-  - TODO: Specify where sessions/files are stored.
+- **Storage**: In-memory or local disk (session scoped)
+   - TODO: Specify where sessions/files are stored.
 
 **Non-goals**
 
@@ -109,11 +168,13 @@
    - full chat history
    - session id
    - settings/toggles
+
 3. Backend builds the **system prompt**.
 4. Backend defines **tools conditionally** (only enabled ones).
 5. Model either:
    - responds normally, or
    - returns a tool call request
+
 6. Backend executes tool call(s) safely and captures results.
 7. Backend injects tool results back into the conversation.
 8. Model produces the final assistant message.
@@ -125,25 +186,26 @@
 
 - The agent **does not blindly call tools**.
 - It must **respect user settings**:
-  - Tools are only available if enabled.
-  - System prompt explicitly forbids calling disabled tools.
+   - Tools are only available if enabled.
+   - System prompt explicitly forbids calling disabled tools.
+
 - It should call tools only when they improve answer quality (e.g., retrieve docs when asked about uploaded files).
 
 **Backend orchestration requirement**
 
 - There is a single orchestration function (example: `orchestrate_chat()`) that:
-  - reads settings
-  - builds system prompt
-  - defines tools conditionally
-  - executes tool calls safely
-  - returns final response + logs
+   - reads settings
+   - builds system prompt
+   - defines tools conditionally
+   - executes tool calls safely
+   - returns final response + logs
 
 **System prompt requirements**
 
 - Must include:
-  - tool descriptions (what each tool does, parameters, outputs)
-  - enabled/disabled capability list
-  - **explicit instruction**: **“Do NOT call tools that are disabled.”** (mandatory)
+   - tool descriptions (what each tool does, parameters, outputs)
+   - enabled/disabled capability list
+   - **explicit instruction**: **“Do NOT call tools that are disabled.”** (mandatory)
 
 ---
 
@@ -155,11 +217,12 @@ Frontend provides a settings popup with 4 toggles; the settings object is sent w
 
 - **Does**: TODO (e.g., searches the web for recent info, returns sources/snippets).
 - **When enabled**:
-  - Tool is registered with OpenAI.
-  - Agent may call it if needed.
+   - Tool is registered with OpenAI.
+   - Agent may call it if needed.
+
 - **When disabled**:
-  - Tool is not registered.
-  - Agent must answer without web search.
+   - Tool is not registered.
+   - Agent must answer without web search.
 
 #### 5.2 Image Generation
 
@@ -177,9 +240,10 @@ Frontend provides a settings popup with 4 toggles; the settings object is sent w
 
 - **Does**: Changes response style/verbosity/structure (no extra tools required).
 - **When enabled**:
-  - Agent produces longer, more structured reasoning-oriented answers (as appropriate).
+   - Agent produces longer, more structured reasoning-oriented answers (as appropriate).
+
 - **When disabled**:
-  - Agent produces concise, direct answers.
+   - Agent produces concise, direct answers.
 
 **Enforcement rules**
 
@@ -206,6 +270,7 @@ Frontend provides a settings popup with 4 toggles; the settings object is sent w
    - filename
    - chunk index
    - any additional tags
+
 6. On relevant queries:
    - backend retrieves top-k chunks from ChromaDB
    - retrieved chunks are injected into the prompt as context
@@ -273,9 +338,10 @@ Frontend provides a settings popup with 4 toggles; the settings object is sent w
 **Session ID usage**
 
 - Session id links:
-  - chat history (client-sent)
-  - uploaded files
-  - ChromaDB collection/metadata filtering
+   - chat history (client-sent)
+   - uploaded files
+   - ChromaDB collection/metadata filtering
+
 - TODO: Document session lifecycle (new session creation, expiration, cleanup).
 
 **Validation & errors**
@@ -291,12 +357,13 @@ Frontend provides a settings popup with 4 toggles; the settings object is sent w
 
 - **Missing API key**: backend returns clear message + 400/500 (choose and document).
 - **File upload validation**:
-  - supported file types only
-  - size limits (TODO)
+   - supported file types only
+   - size limits (TODO)
+
 - **Tool failures**:
-  - network errors / provider errors
-  - tool timeouts (TODO)
-  - invalid tool arguments from model
+   - network errors / provider errors
+   - tool timeouts (TODO)
+   - invalid tool arguments from model
 
 #### Non-production limitations (explicitly acknowledged)
 
@@ -320,9 +387,9 @@ Frontend provides a settings popup with 4 toggles; the settings object is sent w
 
 - TODO: Add `.env.example` and list all variables here.
 - Example:
-  - `OPENAI_API_KEY`
-  - `OPENAI_MODEL` (optional)
-  - `CHROMA_PERSIST_DIR` (optional)
+   - `OPENAI_API_KEY`
+   - `OPENAI_MODEL` (optional)
+   - `CHROMA_PERSIST_DIR` (optional)
 
 #### Backend (FastAPI)
 
@@ -355,14 +422,15 @@ npm run dev
 - **Streaming responses** (SSE/WebSockets) for better UX.
 - **Persistent storage** for sessions and files (SQLite/Postgres).
 - **Smarter RAG**:
-  - better chunking
-  - hybrid search
-  - reranking
-  - citations with chunk provenance
+   - better chunking
+   - hybrid search
+   - reranking
+   - citations with chunk provenance
+
 - **Real web search integration** with caching and rate limits.
 - **Better UI/UX**:
-  - tool call timeline
-  - per-message settings
-  - file management UI
+   - tool call timeline
+   - per-message settings
+   - file management UI
 
 

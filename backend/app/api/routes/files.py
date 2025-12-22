@@ -7,6 +7,7 @@ from uuid import uuid4
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
 from app.core.config import settings
+from app.rag.service import RAGService
 
 router = APIRouter(prefix="/files", tags=["files"])
 
@@ -32,6 +33,7 @@ async def upload_files(
     session_dir.mkdir(parents=True, exist_ok=True)
 
     saved: list[dict] = []
+    saved_paths: list[Path] = []
     for f in files:
         filename = os.path.basename(f.filename or "")
         if not filename:
@@ -44,6 +46,7 @@ async def upload_files(
         target = session_dir / filename
         content = await f.read()
         target.write_bytes(content)
+        saved_paths.append(target)
 
         saved.append(
             {
@@ -53,7 +56,20 @@ async def upload_files(
             }
         )
 
-    return {"session_id": sid, "stored": saved, "note": "Upload stored; RAG processing not implemented yet."}
+    ingest_summary: dict | None = None
+    ingest_error: str | None = None
+    try:
+        rag = RAGService()
+        ingest_summary = rag.ingest_files(session_id=sid, file_paths=saved_paths)
+    except Exception as e:
+        ingest_error = f"{type(e).__name__}: {e}"
+
+    return {
+        "session_id": sid,
+        "stored": saved,
+        "ingest": ingest_summary,
+        "ingest_error": ingest_error,
+    }
 
 
 @router.get("")
