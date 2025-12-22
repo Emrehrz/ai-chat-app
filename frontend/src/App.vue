@@ -90,14 +90,10 @@ function linkClass(path: string) {
     </Sidebar>
 
     <SidebarInset>
-      <header class="flex h-14 shrink-0 items-center gap-2 border-b px-4">
+      <header class="flex h-14 shrink-0 items-center gap-2 px-4">
         <SidebarTrigger />
-        <div class="flex-1">
-          <div class="truncate text-sm font-medium">Tool-Calling AI Chat</div>
-          <div class="truncate text-xs text-muted-foreground">Vue + FastAPI • RAG (ChromaDB) • Toggles</div>
-        </div>
       </header>
-      <main class="flex flex-1 flex-col overflow-hidden">
+      <main class="flex flex-1 min-h-0 flex-col overflow-hidden">
         <RouterView />
       </main>
     </SidebarInset>
