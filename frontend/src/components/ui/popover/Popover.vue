@@ -2,6 +2,7 @@
 import type { PopoverRootEmits, PopoverRootProps } from "reka-ui"
 import { PopoverRoot, useForwardPropsEmits } from "reka-ui"
 
+// Support both direct `open` usage and Vue `v-model:open`.
 const props = defineProps<PopoverRootProps>()
 const emits = defineEmits<PopoverRootEmits>()
 
@@ -9,11 +10,7 @@ const forwarded = useForwardPropsEmits(props, emits)
 </script>
 
 <template>
-  <PopoverRoot
-    v-slot="slotProps"
-    data-slot="popover"
-    v-bind="forwarded"
-  >
+  <PopoverRoot v-slot="slotProps" data-slot="popover" v-bind="forwarded">
     <slot v-bind="slotProps" />
   </PopoverRoot>
 </template>

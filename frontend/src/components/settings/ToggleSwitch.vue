@@ -30,8 +30,6 @@ const checked = computed({
       </p>
     </div>
 
-    <Switch v-model:checked="checked" :disabled="disabled" />
+    <Switch :checked="checked" @update:checked="(v: boolean) => (checked = v)" :disabled="disabled" />
   </div>
 </template>
-
-

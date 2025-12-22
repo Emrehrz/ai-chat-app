@@ -94,7 +94,7 @@ function removeFile(index: number) {
               Add file
             </Button>
 
-            <Popover v-model:open="controlsOpen">
+            <Popover :open="controlsOpen" @update:open="(v: boolean) => (controlsOpen = v)">
               <PopoverTrigger as-child>
                 <Button type="button" variant="outline" class="w-fit">
                   <Settings class="mr-2 size-4" />
@@ -141,15 +141,11 @@ function removeFile(index: number) {
         <div class="mx-auto max-w-3xl space-y-4">
           <MessageList :messages="chat.messages.value" />
 
-          <div v-if="chat.toolCalls.value.length" class="rounded-md border bg-muted p-3">
-            <div class="text-xs font-medium">Tool calls (debug)</div>
-            <pre class="mt-2 overflow-auto text-xs">{{ chat.toolCalls.value }}</pre>
-          </div>
-
           <div v-if="chat.lastError.value" class="rounded-md border border-destructive/40 bg-destructive/10 p-3">
             <div class="text-xs font-medium text-destructive">Error</div>
             <div class="mt-1 text-xs text-destructive">{{ chat.lastError.value }}</div>
           </div>
+
         </div>
       </div>
 
@@ -162,7 +158,7 @@ function removeFile(index: number) {
               Add file
             </Button>
 
-            <Popover v-model:open="controlsOpen">
+            <Popover :open="controlsOpen" @update:open="(v: boolean) => (controlsOpen = v)">
               <PopoverTrigger as-child>
                 <Button type="button" variant="outline" class="w-fit">
                   <Settings class="mr-2 size-4" />

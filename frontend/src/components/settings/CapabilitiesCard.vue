@@ -26,7 +26,7 @@ const { settings } = useAppSettings()
           </div>
           <span :class="compact ? 'text-sm font-medium' : 'text-base font-medium'">Web Search</span>
         </div>
-        <Switch v-model:checked="settings.webSearch" />
+        <Switch :checked="settings.webSearch" @update:checked="(v: boolean) => (settings.webSearch = v)" />
       </div>
 
       <div class="flex items-center justify-between gap-4">
@@ -37,7 +37,7 @@ const { settings } = useAppSettings()
           </div>
           <span :class="compact ? 'text-sm font-medium' : 'text-base font-medium'">Image Generation</span>
         </div>
-        <Switch v-model:checked="settings.imageGeneration" />
+        <Switch :checked="settings.imageGeneration" @update:checked="(v: boolean) => (settings.imageGeneration = v)" />
       </div>
 
       <div class="flex items-center justify-between gap-4">
@@ -48,7 +48,7 @@ const { settings } = useAppSettings()
           </div>
           <span :class="compact ? 'text-sm font-medium' : 'text-base font-medium'">Data Analysis</span>
         </div>
-        <Switch v-model:checked="settings.dataAnalysis" />
+        <Switch :checked="settings.dataAnalysis" @update:checked="(v: boolean) => (settings.dataAnalysis = v)" />
       </div>
 
       <div class="flex items-center justify-between gap-4">
@@ -59,7 +59,7 @@ const { settings } = useAppSettings()
           </div>
           <span :class="compact ? 'text-sm font-medium' : 'text-base font-medium'">Think</span>
         </div>
-        <Switch v-model:checked="settings.thinkMode" />
+        <Switch :checked="settings.thinkMode" @update:checked="(v: boolean) => (settings.thinkMode = v)" />
       </div>
     </div>
   </div>
