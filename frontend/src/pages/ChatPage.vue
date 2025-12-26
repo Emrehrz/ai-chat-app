@@ -5,9 +5,11 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Globe, Image, Paperclip, PieChart, Settings, Sparkles, Upload } from 'lucide-vue-next'
 import MessageList from '@/components/chat/MessageList.vue'
 import MessageComposer from '@/components/chat/MessageComposer.vue'
+import AttachmentChips from '@/components/chat/AttachmentChips.vue'
 import CapabilitiesCard from '@/components/settings/CapabilitiesCard.vue'
 import { useChat } from '@/lib/chat'
 import { useAppSettings } from '@/lib/settings'
+import type { UiAttachment } from '@/lib/chat'
 
 const chat = useChat()
 const { settings: appSettings } = useAppSettings()
@@ -17,11 +19,13 @@ const controlsOpen = ref(false)
 
 const hasMessages = computed(() => (chat.messages.value ?? []).some((m) => m.role === 'user'))
 
-const selectedFiles = ref<File[]>([])
 const isUploading = ref(false)
 const fileInputRef = ref<HTMLInputElement | null>(null)
 const scrollAreaRef = ref<HTMLElement | null>(null)
 const autoScrollArmed = ref(false)
+const uploadStatus = ref<{ kind: 'success' | 'warning' | 'error'; text: string } | null>(null)
+let uploadStatusTimer: number | null = null
+const composerAttachments = ref<UiAttachment[]>([])
 
 const enabledCapabilityBadges = computed(() => {
   const out: Array<{ key: string; label: string; icon: unknown }> = []
@@ -32,6 +36,18 @@ const enabledCapabilityBadges = computed(() => {
   return out
 })
 
+function setUploadStatus(next: { kind: 'success' | 'warning' | 'error'; text: string } | null) {
+  uploadStatus.value = next
+  if (uploadStatusTimer) window.clearTimeout(uploadStatusTimer)
+  uploadStatusTimer = null
+  if (next) {
+    uploadStatusTimer = window.setTimeout(() => {
+      uploadStatus.value = null
+      uploadStatusTimer = null
+    }, 6000)
+  }
+}
+
 function scrollToLastMessage(behavior: ScrollBehavior = 'smooth') {
   const root = scrollAreaRef.value
   if (!root) return
@@ -41,7 +57,10 @@ function scrollToLastMessage(behavior: ScrollBehavior = 'smooth') {
 
 function onSend(text: string) {
   autoScrollArmed.value = true
-  void chat.send(text)
+  // Snapshot current attachments onto this outgoing user message.
+  const attachments = composerAttachments.value.length ? composerAttachments.value.map((a) => ({ ...a })) : undefined
+  composerAttachments.value = []
+  void chat.send(text, { attachments })
   void nextTick(() => scrollToLastMessage('smooth'))
 }
 
@@ -68,19 +87,42 @@ function triggerFilePicker() {
 
 function onFilePick(e: Event) {
   const input = e.target as HTMLInputElement
-  selectedFiles.value = Array.from(input.files ?? [])
-  if (selectedFiles.value.length) {
-    void onUpload()
-  }
+  const files = Array.from(input.files ?? [])
+  if (!files.length) return
+  void onUpload(files)
+  // Allow picking the same file again later.
+  input.value = ''
 }
 
-async function onUpload() {
-  if (!selectedFiles.value.length || isUploading.value) return
+function makeAttachmentId() {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const c = (globalThis as any).crypto as Crypto | undefined
+  return c?.randomUUID ? c.randomUUID() : `att_${Date.now()}_${Math.random().toString(16).slice(2)}`
+}
+
+function removeAttachment(id: string) {
+  composerAttachments.value = composerAttachments.value.filter((a) => a.id !== id)
+}
+
+async function onUpload(files: File[]) {
+  if (!files.length || isUploading.value) return
 
   isUploading.value = true
+  setUploadStatus(null)
   try {
+    // Create UI attachments immediately (uploading state) and keep them visible in the composer.
+    const newAttachments: UiAttachment[] = files.map((f) => ({
+      id: makeAttachmentId(),
+      filename: f.name,
+      bytes: f.size,
+      contentType: f.type,
+      status: 'uploading',
+      detail: null,
+    }))
+    composerAttachments.value = [...composerAttachments.value, ...newAttachments]
+
     const formData = new FormData()
-    selectedFiles.value.forEach((f) => formData.append('files', f))
+    files.forEach((f) => formData.append('files', f))
     if (chat.sessionId.value) {
       formData.append('session_id', chat.sessionId.value)
     }
@@ -101,22 +143,59 @@ async function onUpload() {
       chat.sessionId.value = data.session_id
     }
 
-    selectedFiles.value = []
-    if (fileInputRef.value) fileInputRef.value.value = ''
+    const ingestError: string | null = typeof data.ingest_error === 'string' ? data.ingest_error : null
+
+    // Mark these attachments as uploaded (or warning if ingest failed).
+    const byName = new Map<string, { bytes?: number; contentType?: string }>()
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    for (const s of (data.stored ?? []) as any[]) {
+      if (s?.filename) byName.set(String(s.filename), { bytes: s?.bytes, contentType: s?.content_type })
+    }
+
+    composerAttachments.value = composerAttachments.value.map((a) => {
+      const isNew = newAttachments.some((n) => n.id === a.id)
+      if (!isNew) return a
+      const meta = byName.get(a.filename)
+      return {
+        ...a,
+        bytes: meta?.bytes ?? a.bytes,
+        contentType: meta?.contentType ?? a.contentType,
+        status: ingestError ? 'warning' : 'uploaded',
+        detail: ingestError ? `Ingest failed: ${ingestError}` : null,
+      }
+    })
+
+    const uploadedNames = (data.stored ?? [])
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .map((s: any) => s?.filename)
+      .filter((x: unknown): x is string => typeof x === 'string' && x.length > 0)
+      .join(', ')
+
+    if (data.ingest_error) {
+      setUploadStatus({
+        kind: 'warning',
+        text: `Uploaded${uploadedNames ? `: ${uploadedNames}` : ''}. Ingest failed: ${data.ingest_error}`,
+      })
+    } else {
+      setUploadStatus({
+        kind: 'success',
+        text: `Uploaded${uploadedNames ? `: ${uploadedNames}` : ''}.`,
+      })
+    }
+
   } catch (e) {
     const msg = e instanceof Error ? e.message : 'Upload failed'
-    alert(`Upload error: ${msg}`)
+    setUploadStatus({ kind: 'error', text: `Upload failed: ${msg}` })
+    // Mark any currently-uploading attachments as error (best effort).
+    composerAttachments.value = composerAttachments.value.map((a) =>
+      a.status === 'uploading' ? { ...a, status: 'error', detail: msg } : a,
+    )
   } finally {
     isUploading.value = false
   }
 }
 
-function removeFile(index: number) {
-  selectedFiles.value.splice(index, 1)
-  if (!selectedFiles.value.length && fileInputRef.value) {
-    fileInputRef.value.value = ''
-  }
-}
+// removeFile removed (handled by removeAttachment)
 </script>
 
 <template>
@@ -157,6 +236,22 @@ function removeFile(index: number) {
                 <span class="font-medium text-foreground">{{ b.label }}</span>
               </span>
             </div>
+
+            <div v-if="uploadStatus" class="hidden items-center sm:flex">
+              <span
+                class="ml-2 inline-flex items-center rounded-full border px-2 py-1 text-[11px]"
+                :class="
+                  uploadStatus.kind === 'success'
+                    ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                    : uploadStatus.kind === 'warning'
+                      ? 'border-amber-200 bg-amber-50 text-amber-800'
+                      : 'border-destructive/30 bg-destructive/10 text-destructive'
+                "
+                :title="uploadStatus.text"
+              >
+                {{ uploadStatus.text }}
+              </span>
+            </div>
           </div>
 
           <MessageComposer :disabled="!chat.canSend.value" @send="onSend">
@@ -168,14 +263,13 @@ function removeFile(index: number) {
               </button>
             </template>
             <template #attachments>
-              <div v-if="selectedFiles.length" class="mb-2 flex flex-wrap gap-2">
-                <button v-for="(f, idx) in selectedFiles" :key="f.name" type="button"
-                  class="inline-flex max-w-full items-center gap-2 rounded-full border bg-muted px-3 py-1 text-xs hover:bg-muted/70"
-                  :title="`Remove ${f.name}`" @click="removeFile(idx)">
-                  <span class="max-w-56 truncate">{{ f.name }}</span>
-                  <span class="text-muted-foreground">×</span>
-                </button>
-              </div>
+              <AttachmentChips
+                v-if="composerAttachments.length"
+                class="mb-2"
+                :attachments="composerAttachments"
+                removable
+                @remove="removeAttachment"
+              />
             </template>
             <template #actions>
               <span v-if="isUploading" class="px-2 text-xs text-muted-foreground">Uploading…</span>
@@ -238,21 +332,20 @@ function removeFile(index: number) {
 
             <MessageComposer :disabled="!chat.canSend.value" @send="onSend">
               <template #prepend>
-                <input ref="fileInputRef" type="file" multiple class="hidden" @change="onFilePick" />
+              <input ref="fileInputRef" type="file" multiple class="hidden" @change="onFilePick" />
                 <button type="button" class="rounded-md p-2 hover:bg-accent" title="Attach files"
                   @click="triggerFilePicker">
                   <Paperclip class="size-4" />
                 </button>
               </template>
               <template #attachments>
-                <div v-if="selectedFiles.length" class="mb-2 flex flex-wrap gap-2">
-                  <button v-for="(f, idx) in selectedFiles" :key="f.name" type="button"
-                    class="inline-flex max-w-full items-center gap-2 rounded-full border bg-muted px-3 py-1 text-xs hover:bg-muted/70"
-                    :title="`Remove ${f.name}`" @click="removeFile(idx)">
-                    <span class="max-w-56 truncate">{{ f.name }}</span>
-                    <span class="text-muted-foreground">×</span>
-                  </button>
-                </div>
+              <AttachmentChips
+                v-if="composerAttachments.length"
+                class="mb-2"
+                :attachments="composerAttachments"
+                removable
+                @remove="removeAttachment"
+              />
               </template>
               <template #actions>
                 <span v-if="isUploading" class="px-2 text-xs text-muted-foreground">Uploading…</span>

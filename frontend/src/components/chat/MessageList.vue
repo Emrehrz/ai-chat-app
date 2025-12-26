@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import type { ChatMessage } from '@/lib/chat'
+import type { UiChatMessage } from '@/lib/chat'
 import MessageBubble from '@/components/chat/MessageBubble.vue'
 
 defineProps<{
-  messages: ChatMessage[]
+  messages: UiChatMessage[]
   isLoading?: boolean
 }>()
 </script>

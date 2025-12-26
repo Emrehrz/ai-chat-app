@@ -3,9 +3,24 @@ import { useAppSettings } from '@/lib/settings'
 
 export type ChatRole = 'user' | 'assistant' | 'system' | 'tool'
 
-export type ChatMessage = {
+export type TransportChatMessage = {
   role: ChatRole
   content: string
+}
+
+export type UiAttachmentStatus = 'uploading' | 'uploaded' | 'warning' | 'error'
+
+export type UiAttachment = {
+  id: string
+  filename: string
+  bytes?: number
+  contentType?: string
+  status: UiAttachmentStatus
+  detail?: string | null
+}
+
+export type UiChatMessage = TransportChatMessage & {
+  attachments?: UiAttachment[]
 }
 
 export type ToolCallLog = {
@@ -17,7 +32,7 @@ export type ToolCallLog = {
 
 export type ChatResponse = {
   session_id: string
-  assistant_message?: ChatMessage | null
+  assistant_message?: TransportChatMessage | null
   tool_calls?: ToolCallLog[]
   error?: string | null
 }
@@ -33,7 +48,7 @@ export function useChat() {
   const { asBackendPayload } = useAppSettings()
 
   const sessionId = ref<string | null>(null)
-  const messages = ref<ChatMessage[]>([
+  const messages = ref<UiChatMessage[]>([
     {
       role: 'assistant',
       content:
@@ -47,14 +62,14 @@ export function useChat() {
 
   const canSend = computed(() => !isLoading.value)
 
-  async function send(userText: string) {
+  async function send(userText: string, opts?: { attachments?: UiAttachment[] }) {
     if (!userText.trim() || isLoading.value) return
 
     lastError.value = null
     toolCalls.value = []
     isLoading.value = true
 
-    messages.value.push({ role: 'user', content: userText })
+    messages.value.push({ role: 'user', content: userText, attachments: opts?.attachments })
 
     try {
       const res = await fetch(`${apiBaseUrl()}/chat`, {
@@ -62,7 +77,8 @@ export function useChat() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           session_id: sessionId.value,
-          messages: messages.value,
+          // IMPORTANT: backend messages only support {role, content}
+          messages: messages.value.map((m) => ({ role: m.role, content: m.content })),
           settings: asBackendPayload.value,
         }),
       })
