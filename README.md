@@ -7,11 +7,16 @@ This repository is a small full‑stack AI chat demo. The goal is to demonstrate
 - **Backend‑enforced capability toggles**: disabled tools are **not registered at all**, so the model cannot call them.
 - **Single‑round tool calling**: `POST /chat` runs at most **one tool round** (LLM → tools → LLM).
 - **RAG (ChromaDB + OpenAI embeddings)**:
-  - `POST /files/upload` stores files on disk and supports `.txt`, `.md`, `.pdf`, `.docx` formats.
-  - If `OPENAI_API_KEY` is present, the backend chunks (respecting sentence/Markdown boundaries) → embeds → persists to ChromaDB.
-  - In `/chat`, retrieval runs automatically if session has uploaded files, injecting readable context as a system message prefixed with `RAG_CONTEXT:`.
+   - `POST /files/upload` stores files on disk and supports `.txt`, `.md`, `.pdf`, `.docx` formats.
+   - If `OPENAI_API_KEY` is present, the backend chunks (respecting sentence/Markdown boundaries) → embeds → persists to ChromaDB.
+   - In `/chat`, retrieval runs automatically if session has uploaded files, injecting readable context as a system message prefixed with `RAG_CONTEXT:`.
+
 - **Tools (Implemented — stub)**:
-  - `web_search`, `generate_image`, `analyze_json` exist as tools and can be called by the model, but **they do not have real integrations yet**. They return empty / summary outputs with a “not implemented” note.
+   - `web_search`, `generate_image`, `analyze_json` exist as tools and can be called by the model, but __they do not have real integrations yet__. They return empty / summary outputs with a “not implemented” note.
+
+```console
+These tools are intentionally stubbed to demonstrate tool-calling, gating, and orchestration logic, not external integrations.
+```
 
 ---
 
@@ -20,41 +25,25 @@ This repository is a small full‑stack AI chat demo. The goal is to demonstrate
 ### High-level design goals
 
 - **Clear separation of concerns**
-  - Frontend = UI + local state only (messages, session id, toggles)
-  - Backend = orchestration + safety + prompt construction + tool exposure
-  - RAG = its own module/service (not embedded in `/chat` handler logic)
+   - Frontend = UI + local state only (messages, session id, toggles)
+   - Backend = orchestration + safety + prompt construction + tool exposure
+   - RAG = its own module/service (not embedded in `/chat` handler logic)
 
-### High-level diagram (ASCII)
+### High-level diagram
 
-```text
-┌─────────────────────────┐        HTTP         ┌──────────────────────────┐
-│        Frontend          │  ───────────────▶   │          Backend          │
-│  Vue + Vite (UI)         │                    │  FastAPI (Orchestrator)   │
-│  - UI / state            │   ◀──────────────  │  - Builds system prompt    │
-│  - toggles/settings      │      JSON          │  - Registers tools         │
-│  - chat history          │                    │  - Executes tool calls     │
-└─────────────────────────┘                    └───────────┬───────────────┘
-                                                           │
-                              ┌────────────────────────────┼────────────────────────────┐
-                              │                            │                            │
-                              ▼                            ▼                            ▼
-                    ┌──────────────────┐         ┌──────────────────┐         ┌──────────────────┐
-                    │  RAG Module       │         │   Tool Functions  │         │   OpenAI API      │
-                    │  (ChromaDB local) │         │  (web/img/data)   │         │  Chat + Embeddings│
-                    │  - chunk/embed    │         │  - gated by opts  │         │  - tools enabled  │
-                    │  - retrieve top-k │         │  - stub today     │         │  - decides calls  │
-                    └──────────────────┘         └──────────────────┘         └──────────────────┘
-```
+![High-level architecture diagram](high-level-diagram.png)
+
 
 ### Frontend responsibilities
 
 - Owns chat UI + local state (message history, session id, settings toggles).
 - For every `POST /chat` request, it sends:
-  - `session_id`
-  - full `messages` history
-  - `settings` (capability toggles)
+   - `session_id`
+   - full `messages` history
+   - `settings` (capability toggles)
+
 - File upload UI currently lives in the **Chat page** (`/chat`).
-- Note: the backend can return `tool_calls`, but the current UI **does not render tool logs** (it keeps them in state only).
+- Note: the backend can return `tool_calls`, but the current UI __does not render tool logs__ (it keeps them in state only).
 - The dedicated `/files` page is currently a **placeholder** (stub UI).
 
 ### Backend responsibilities
@@ -63,9 +52,10 @@ This repository is a small full‑stack AI chat demo. The goal is to demonstrate
 - Registers **only enabled tools** in the OpenAI `tools` list.
 - Calls OpenAI Chat Completions.
 - If tool calls are returned:
-  - executes tools safely
-  - injects tool results into the conversation
-  - calls OpenAI **one more time**
+   - executes tools safely
+   - injects tool results into the conversation
+   - calls OpenAI **one more time**
+
 - Optionally performs RAG retrieval and injects `RAG_CONTEXT:` as a separate system message.
 
 ---
@@ -79,6 +69,7 @@ This repository is a small full‑stack AI chat demo. The goal is to demonstrate
 
 ```json
 { "status": "ok" }
+
 ```
 
 ### POST `/chat`
@@ -97,6 +88,7 @@ This repository is a small full‑stack AI chat demo. The goal is to demonstrate
     "think_mode": false
   }
 }
+
 ```
 
 - **Response (JSON)**:
@@ -115,19 +107,21 @@ This repository is a small full‑stack AI chat demo. The goal is to demonstrate
   ],
   "error": null
 }
+
 ```
 
 **Important behavior (current code)**
 
-- If `OPENAI_API_KEY` is missing: the endpoint still returns **HTTP 200**, but `error` is set and `assistant_message` is `null`.
+- If `OPENAI_API_KEY` is missing: the endpoint still returns __HTTP 200__, but `error` is set and `assistant_message` is `null`.
 - Tool calling is capped to **one tool round**.
 
 ### POST `/files/upload` (multipart)
 
 - **Purpose**: file upload + (if possible) ingest into RAG store
 - **Form fields**:
-  - `files`: 1..N files
-  - `session_id`: optional (if missing, the backend generates one)
+   - `files`: 1..N files
+   - `session_id`: optional (if missing, the backend generates one)
+
 - **Response example**:
 
 ```json
@@ -137,6 +131,7 @@ This repository is a small full‑stack AI chat demo. The goal is to demonstrate
   "ingest": { "session_id": "…", "documents_loaded": 1, "chunks_created": 1, "stored": 1 },
   "ingest_error": null
 }
+
 ```
 
 **Important behavior (current code)**
@@ -154,6 +149,7 @@ This repository is a small full‑stack AI chat demo. The goal is to demonstrate
   "session_id": "…",
   "files": [{ "filename": "note.txt", "bytes": 11 }]
 }
+
 ```
 
 ---
@@ -164,19 +160,19 @@ Frontend stores toggles in `localStorage` and sends them with each `POST /chat` 
 
 ### Web Search — Implemented (stub)
 
-- **Tool name**: `web_search`
+- __Tool name__: `web_search`
 - **Current behavior**: returns empty `results` + a “not implemented yet” note.
 - **Expected later**: SerpAPI / Tavily / Bing (or similar) integration returning sources/snippets.
 
 ### Image Generation — Implemented (stub)
 
-- **Tool name**: `generate_image`
+- __Tool name__: `generate_image`
 - **Current behavior**: returns empty `images` + a “not implemented yet” note.
 - **Expected later**: OpenAI Images (or another provider) integration.
 
 ### Data Analysis — Implemented (stub)
 
-- **Tool name**: `analyze_json`
+- __Tool name__: `analyze_json`
 - **Current behavior**: returns `type` + a small serialized `preview` of the provided JSON-like payload.
 - **Expected later**: real analysis (statistics, summaries, transformations, etc.).
 
@@ -197,6 +193,7 @@ Frontend stores toggles in `localStorage` and sends them with each `POST /chat` 
    - chunks the content,
    - (if API key exists) generates embeddings,
    - persists chunks/embeddings to ChromaDB.
+
 3. In `POST /chat`, retrieval runs automatically if the session has uploaded files:
    - query embedding is generated
    - If user mentions a specific filename in their message, only chunks from that file are retrieved
@@ -214,13 +211,14 @@ Frontend stores toggles in `localStorage` and sends them with each `POST /chat` 
 
 ### Retrieval trigger (current)
 
-- **Primary**: Automatic if session has uploaded files (checks `STORAGE_DIR/<session_id>/` for files)
+- __Primary__: Automatic if session has uploaded files (checks `STORAGE_DIR/<session_id>/` for files)
 - **Filename filtering**: If user mentions a specific filename in their message, only that file's chunks are retrieved (case-insensitive matching)
 - **Fallback**: Keyword-based heuristic on user message (e.g., “file”, “document”, “pdf”, “upload”, “attached”, etc.)
 
 ### File-specific retrieval
 
 When a user mentions a specific file (by name or extension), the system automatically filters retrieval to only include chunks from that file. This prevents mixing content from multiple files when asking about a specific document. Examples:
+
 - "bu dosyadaki veriler" → matches filename in message
 - "legal_document_rows.csv" → retrieves only from that CSV file
 - Generic queries without filename → retrieves from all session files
@@ -275,6 +273,7 @@ python -m venv .venv
 . .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+
 ```
 
 ### Frontend (Vue + Vite)
@@ -285,6 +284,7 @@ This repo includes a `pnpm-lock.yaml`:
 cd frontend
 pnpm install
 pnpm dev
+
 ```
 
 Frontend default: `http://localhost:5173` (Vite).
@@ -295,20 +295,21 @@ Frontend default: `http://localhost:5173` (Vite).
 
 - `GET /health` → `{"status":"ok"}`
 - Chat:
-  - without `OPENAI_API_KEY`: `POST /chat` → HTTP 200 + `error` set
-  - with key: `POST /chat` returns an assistant response (and may call enabled tools)
+   - without `OPENAI_API_KEY`: `POST /chat` → HTTP 200 + `error` set
+   - with key: `POST /chat` returns an assistant response (and may call enabled tools)
+
 - Upload:
-  - `POST /files/upload` stores files on disk
-  - without key: `ingest_error` is set
-  - with key: embeddings are generated and data is persisted to ChromaDB
+   - `POST /files/upload` stores files on disk
+   - without key: `ingest_error` is set
+   - with key: embeddings are generated and data is persisted to ChromaDB
 
 ---
 
 ## Tests
 
 - Smoke test: `backend/app/tests/test_e2e_smoke.py`
-  - validates route wiring without calling OpenAI
-  - asserts deterministic “missing key” behavior
+   - validates route wiring without calling OpenAI
+   - asserts deterministic “missing key” behavior
 
 ---
 
