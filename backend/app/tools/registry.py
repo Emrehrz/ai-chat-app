@@ -41,7 +41,10 @@ def get_enabled_tool_specs(settings: ChatSettings) -> list[ToolSpec]:
         specs.append(
             ToolSpec(
                 name="web_search",
-                description="Search the web for up-to-date information and return a list of results.",
+                description=(
+                    "Web search (STUB): currently returns empty results and a note (no real web access yet). "
+                    "Use to demonstrate tool-calling; be transparent with the user."
+                ),
                 parameters_schema={
                     "type": "object",
                     "properties": {"query": {"type": "string"}},
@@ -56,7 +59,10 @@ def get_enabled_tool_specs(settings: ChatSettings) -> list[ToolSpec]:
         specs.append(
             ToolSpec(
                 name="generate_image",
-                description="Generate an image from a text prompt.",
+                description=(
+                    "Image generation (STUB): currently returns an empty image list and a note (not implemented). "
+                    "Be transparent with the user."
+                ),
                 parameters_schema={
                     "type": "object",
                     "properties": {"prompt": {"type": "string"}},
@@ -71,7 +77,10 @@ def get_enabled_tool_specs(settings: ChatSettings) -> list[ToolSpec]:
         specs.append(
             ToolSpec(
                 name="analyze_json",
-                description="Analyze a JSON payload and return a summary/insights.",
+                description=(
+                    "Data analysis (STUB): currently returns a type + preview and a note (not implemented). "
+                    "Be transparent with the user."
+                ),
                 parameters_schema={
                     "type": "object",
                     "properties": {"data": {}},

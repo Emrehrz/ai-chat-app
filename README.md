@@ -7,9 +7,9 @@ This repository is a small full‑stack AI chat demo. The goal is to demonstrate
 - **Backend‑enforced capability toggles**: disabled tools are **not registered at all**, so the model cannot call them.
 - **Single‑round tool calling**: `POST /chat` runs at most **one tool round** (LLM → tools → LLM).
 - **RAG (ChromaDB + OpenAI embeddings)**:
-  - `POST /files/upload` stores files on disk.
-  - If `OPENAI_API_KEY` is present, the backend chunks → embeds → persists to ChromaDB.
-  - In `/chat`, a small heuristic triggers retrieval and injects context as a system message prefixed with `RAG_CONTEXT:`.
+  - `POST /files/upload` stores files on disk and supports `.txt`, `.md`, `.pdf`, `.docx` formats.
+  - If `OPENAI_API_KEY` is present, the backend chunks (respecting sentence/Markdown boundaries) → embeds → persists to ChromaDB.
+  - In `/chat`, retrieval runs automatically if session has uploaded files, injecting readable context as a system message prefixed with `RAG_CONTEXT:`.
 - **Tools (Implemented — stub)**:
   - `web_search`, `generate_image`, `analyze_json` exist as tools and can be called by the model, but **they do not have real integrations yet**. They return empty / summary outputs with a “not implemented” note.
 
@@ -197,19 +197,40 @@ Frontend stores toggles in `localStorage` and sends them with each `POST /chat` 
    - chunks the content,
    - (if API key exists) generates embeddings,
    - persists chunks/embeddings to ChromaDB.
-3. In `POST /chat`, if the last user message looks like it refers to uploaded documents, retrieval runs:
-   - query embedding
-   - Chroma query with `where={"session_id": session_id}`
-   - inject retrieved chunks as a system message prefixed with `RAG_CONTEXT:`
+3. In `POST /chat`, retrieval runs automatically if the session has uploaded files:
+   - query embedding is generated
+   - If user mentions a specific filename in their message, only chunks from that file are retrieved
+   - Otherwise, Chroma query with `where={"session_id": session_id}` retrieves top-k chunks from all session files
+   - retrieved chunks are injected as a readable system message with `RAG_CONTEXT:` prefix
+   - fallback: if no files in session, keyword-based heuristic triggers retrieval (e.g., “file”, “document”, “pdf”, “upload”, “attached”, etc.)
 
 ### Supported file types (current)
 
-- In practice: **.txt** and “UTF‑8 text‑like” files.
-- PDF/DOCX/CSV/Markdown parsing is **not implemented yet**.
+- **Text files**: `.txt` (UTF-8)
+- **Markdown**: `.md`, `.markdown`
+- **PDF**: `.pdf` (text extraction via `pypdf`)
+- **DOCX**: `.docx` (text extraction via `python-docx`)
+- Other formats: fallback to text reading if possible, otherwise returns an error message
 
 ### Retrieval trigger (current)
 
-- Simple keyword heuristic (e.g., “file”, “document”, “pdf”, “upload”, “attached”, etc.).
+- **Primary**: Automatic if session has uploaded files (checks `STORAGE_DIR/<session_id>/` for files)
+- **Filename filtering**: If user mentions a specific filename in their message, only that file's chunks are retrieved (case-insensitive matching)
+- **Fallback**: Keyword-based heuristic on user message (e.g., “file”, “document”, “pdf”, “upload”, “attached”, etc.)
+
+### File-specific retrieval
+
+When a user mentions a specific file (by name or extension), the system automatically filters retrieval to only include chunks from that file. This prevents mixing content from multiple files when asking about a specific document. Examples:
+- "bu dosyadaki veriler" → matches filename in message
+- "legal_document_rows.csv" → retrieves only from that CSV file
+- Generic queries without filename → retrieves from all session files
+
+### Chunking strategy (current)
+
+- Respects sentence boundaries (`.`, `!`, `?` followed by whitespace)
+- Preserves Markdown structure (headers, code blocks, paragraphs)
+- Overlap handled at natural boundaries (sentence/paragraph breaks)
+- Falls back to simple chunking for very small chunks or when boundaries not found
 
 ---
 
@@ -295,15 +316,16 @@ Frontend default: `http://localhost:5173` (Vite).
 
 - Web search / image generation / data analysis tools are **stub** implementations.
 - Frontend does not show `tool_calls` logs in the UI.
-- RAG loader/chunker is basic; PDF/DOCX parsing is missing; no citations/reranking UI.
+- RAG: no citations/reranking UI; chunking respects boundaries but could be further optimized.
 - No auth / multi‑tenant hardening; not production‑hardened.
+- OCR support for images is not implemented (PDF/DOCX text extraction only).
 
 ---
 
 ## Next steps (suggested)
 
 - Implement real tool integrations (web search / image generation / data analysis)
-- Improve RAG: better chunking + file type support (PDF/DOCX/CSV/MD) + citations/reranking
+- Improve RAG: citations/reranking UI, CSV parsing, image OCR support
 - Add a tool‑call timeline UI
 - Streaming responses (SSE/WebSocket)
 - Auth + rate limiting + observability

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from uuid import uuid4
 
 from fastapi import APIRouter
@@ -26,6 +27,10 @@ def _build_system_prompt(req: ChatRequest, enabled_tool_names: list[str]) -> str
         "Follow the user's request.",
         "If you use a tool, call it via the provided tool interface.",
         "Do not claim you used a tool unless you actually called it.",
+        "If the user asks for a capability that is disabled, say it is disabled in Settings (do not blame model limitations).",
+        "Tool transparency rules:",
+        "- If a tool result indicates it is a stub / not implemented, explicitly tell the user the feature is a stub and may return empty results.",
+        "- Keep this disclosure short and proceed with the best non-tool answer or ask for missing details/links.",
         "",
         f"Enabled tools: {', '.join(enabled_tool_names) if enabled_tool_names else '(none)'}",
         f"Disabled tools: {', '.join(disabled) if disabled else '(none)'}",
@@ -42,23 +47,71 @@ def _build_system_prompt(req: ChatRequest, enabled_tool_names: list[str]) -> str
     return "\n".join(lines).strip()
 
 
+def _get_session_files(session_id: str) -> list[str]:
+    """Get list of filenames in the session directory."""
+    if not session_id:
+        return []
+    
+    base = Path(settings.storage_dir).resolve()
+    session_dir = base / session_id
+    if not session_dir.exists():
+        return []
+    
+    return [f.name for f in session_dir.iterdir() if f.is_file()]
+
+
+def _extract_filename_from_query(query: str, session_id: str) -> str | None:
+    """
+    Extract filename from user query by matching against session files.
+    
+    Returns the filename if found in the query, None otherwise.
+    """
+    if not query or not session_id:
+        return None
+    
+    session_files = _get_session_files(session_id)
+    if not session_files:
+        return None
+    
+    query_lower = query.lower()
+    
+    # Check for exact filename matches (case-insensitive)
+    for filename in session_files:
+        filename_lower = filename.lower()
+        # Check if filename appears in query
+        if filename_lower in query_lower:
+            return filename
+        
+        # Also check filename without extension
+        filename_no_ext = Path(filename).stem.lower()
+        if filename_no_ext and filename_no_ext in query_lower:
+            return filename
+    
+    return None
+
+
 def _should_use_rag(req: ChatRequest) -> bool:
-    """Simple heuristic: use RAG when user likely refers to uploaded files."""
+    """Use RAG if session has uploaded files."""
+    session_id = req.session_id
+    if not session_id:
+        return False
+    
+    # Check if session has files
+    base = Path(settings.storage_dir).resolve()
+    session_dir = base / session_id
+    if session_dir.exists() and any(session_dir.iterdir()):
+        # Session has files, always use RAG
+        return True
+    
+    # Fallback to keyword-based detection
     last_user = next((m for m in reversed(req.messages) if m.role == "user"), None)
     if not last_user:
         return False
-
+    
     t = (last_user.content or "").lower()
     triggers = [
-        "file",
-        "files",
-        "document",
-        "pdf",
-        "upload",
-        "attached",
-        "my notes",
-        "these",
-        "this doc",
+        "file", "files", "document", "pdf", "upload",
+        "attached", "my notes", "these", "this doc"
     ]
     return any(k in t for k in triggers)
 
@@ -94,8 +147,12 @@ def orchestrate_chat(req: ChatRequest) -> ChatResponse:
         rag_service = RAGService()
         last_user = next((m for m in reversed(req.messages) if m.role == "user"), None)
         query = last_user.content if last_user else ""
+        
+        # Extract filename from query if user mentions a specific file
+        filename = _extract_filename_from_query(query, session_id) if query else None
+        
         try:
-            chunks = rag_service.retrieve(session_id=session_id, query=query, top_k=5)
+            chunks = rag_service.retrieve(session_id=session_id, query=query, top_k=5, filename=filename)
         except Exception as e:
             chunks = []
             # Keep model usable even if retrieval fails
@@ -108,19 +165,32 @@ def orchestrate_chat(req: ChatRequest) -> ChatResponse:
             )
 
         if chunks:
-            context_payload = {
-                "session_id": session_id,
-                "retrieved_chunks": chunks,
-                "instruction": (
-                    "Use these retrieved chunks as supporting context. "
-                    "If they don't contain the answer, say so and ask for clarification."
-                ),
-            }
+            # Build readable RAG context format
+            context_lines = [
+                f"RAG_CONTEXT: Retrieved information from uploaded files (session: {session_id}):",
+                "",
+            ]
+            
+            for chunk in chunks:
+                metadata = chunk.get("metadata", {})
+                filename = metadata.get("filename", "unknown")
+                chunk_index = metadata.get("chunk_index", 0)
+                content = chunk.get("content", "")
+                
+                context_lines.append(f"--- Document: {filename} (chunk {chunk_index}) ---")
+                context_lines.append(content)
+                context_lines.append("")
+            
+            context_lines.append(
+                "Instructions: Use the above retrieved chunks to answer the user's question. "
+                "If the information is not in these chunks, clearly state that and ask for clarification."
+            )
+            
             messages.insert(
                 1,
                 {
                     "role": "system",
-                    "content": "RAG_CONTEXT:\n" + json.dumps(context_payload, ensure_ascii=False),
+                    "content": "\n".join(context_lines),
                 },
             )
 
@@ -181,6 +251,19 @@ def orchestrate_chat(req: ChatRequest) -> ChatResponse:
                         "content": json.dumps(result, ensure_ascii=False),
                     }
                 )
+                # Nudge the model to be transparent about stub tools (most reliable via system message).
+                note = result.get("note") if isinstance(result, dict) else None
+                if isinstance(note, str) and ("stub" in note.lower() or "not implemented" in note.lower()):
+                    messages.append(
+                        {
+                            "role": "system",
+                            "content": (
+                                f"TOOL_NOTICE: {name} returned a stub/not-implemented result. "
+                                "You must briefly disclose this to the user (e.g., 'Web search is enabled but is a stub right now'), "
+                                "then continue without claiming fresh web results."
+                            ),
+                        }
+                    )
             except Exception as e:
                 log.error = f"{type(e).__name__}: {e}"
                 messages.append(

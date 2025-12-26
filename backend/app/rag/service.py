@@ -77,19 +77,22 @@ class RAGService:
         ids: list[str] = []
         metadatas: list[dict[str, Any]] = []
         for i, c in enumerate(chunks):
-            doc_id = c.get("document_id") or "unknown"
-            chunk_index = c.get("chunk_index")
+            doc_id = str(c.get("document_id") or "unknown")
+            chunk_index = int(c.get("chunk_index") or 0)
             ids.append(f"{session_id}:{doc_id}:{chunk_index}:{i}")
-            metadatas.append(
-                {
-                    "session_id": session_id,
-                    "document_id": c.get("document_id"),
-                    "filename": c.get("filename"),
-                    "chunk_index": c.get("chunk_index"),
-                    "start": c.get("start"),
-                    "end": c.get("end"),
-                }
-            )
+
+            # Chroma metadata must be str/int/float/bool (no None).
+            raw_meta: dict[str, Any] = {
+                "session_id": session_id,
+                "document_id": doc_id,
+                "filename": str(c.get("filename") or ""),
+                "chunk_index": chunk_index,
+                # Optional fields (only include if present)
+                "start": c.get("start"),
+                "end": c.get("end"),
+            }
+            meta = {k: v for k, v in raw_meta.items() if v is not None}
+            metadatas.append(meta)
 
         if ids:
             self.collection.add(
@@ -106,14 +109,18 @@ class RAGService:
             "stored": len(ids),
         }
 
-    def retrieve(self, session_id: str, query: str, top_k: int = 5) -> list[dict[str, Any]]:
+    def retrieve(self, session_id: str, query: str, top_k: int = 5, filename: str | None = None) -> list[dict[str, Any]]:
         """
         Retrieve top-k relevant chunks for a query.
 
-        TODO:
-          - Generate query embedding
-          - Query ChromaDB with session_id filter
-          - Return chunks with metadata
+        Args:
+            session_id: Session ID to filter chunks
+            query: Query text for semantic search
+            top_k: Number of chunks to retrieve
+            filename: Optional filename to filter chunks by specific file
+
+        Returns:
+            List of chunk dicts with content, metadata, and distance
         """
         if not query.strip():
             return []
@@ -121,10 +128,15 @@ class RAGService:
         top_k = max(1, min(int(top_k), 10))
         q_emb = self._embed_texts([query.strip()])[0]
 
+        # Build where clause: always filter by session_id, optionally by filename
+        where_clause: dict[str, Any] = {"session_id": session_id}
+        if filename:
+            where_clause["filename"] = filename
+
         res = self.collection.query(
             query_embeddings=[q_emb],
             n_results=top_k,
-            where={"session_id": session_id},
+            where=where_clause,
             include=["documents", "metadatas", "distances"],
         )
 
